@@ -1,0 +1,9 @@
+iclevr
+.venv
+checkpoints*
+wandb*
+results*
+logs*
+.cursor*
+*.zip
+*.pth
