@@ -12,6 +12,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 import wandb
 from diffusers import DDPMScheduler
+import torch.amp
 
 from dataset import iclevrDataset
 from ddpm import conditionalDDPM
@@ -30,7 +31,7 @@ def load_checkpoint(model, optimizer, path):
     model.load_state_dict(torch.load(path)['model'])
     optimizer.load_state_dict(torch.load(path)['optimizer'])
 
-def train_one_epoch(epoch, model, optimizer, train_loader, loss_function, noise_scheduler, total_timesteps, device):
+def train_one_epoch(epoch, model, optimizer, train_loader, loss_function, noise_scheduler, total_timesteps, device, scaler=None, use_amp=False):
     model.train()
     train_loss = []
     progress_bar = tqdm(train_loader, desc=f'Epoch: {epoch}', leave=True)
@@ -41,13 +42,19 @@ def train_one_epoch(epoch, model, optimizer, train_loader, loss_function, noise_
         
         timesteps = get_random_timesteps(batch_size, total_timesteps, device)
         noisy_x = noise_scheduler.add_noise(x, noise, timesteps)
-        output = model(noisy_x, timesteps, label)
-        
-        loss = loss_function(output, noise)
-        
         optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        if use_amp and scaler is not None:
+            with torch.amp.autocast('cuda'):
+                output = model(noisy_x, timesteps, label)
+                loss = loss_function(output, noise)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            output = model(noisy_x, timesteps, label)
+            loss = loss_function(output, noise)
+            loss.backward()
+            optimizer.step()
         
         train_loss.append(loss.item())
         progress_bar.set_postfix({'Loss': np.mean(train_loss)})
@@ -77,6 +84,7 @@ def arg_parser():
     parser.add_argument('--save-dir', type=str, default=None)
     parser.add_argument('--log-dir', type=str, default=None)
     parser.add_argument('--save-freq', type=int, default=5)
+    parser.add_argument('--amp', action='store_true', default=False, help='是否啟用自動混合精度(AMP)訓練')
     args = parser.parse_args()
     
     # 如果沒有指定 checkpoint，則自動設置 resume 為 True
@@ -105,7 +113,8 @@ def save_hyperparameters(args, save_dir):
         'num_workers': args.num_workers,
         'dataset': args.dataset,
         'device': args.device,
-        'save_freq': args.save_freq
+        'save_freq': args.save_freq,
+        'amp': args.amp
     }
     
     # 如果有 checkpoint，也記錄下來
@@ -136,7 +145,8 @@ def main():
             "batch_size": args.batch_size,
             "num_workers": args.num_workers,
             "dataset": args.dataset,
-            "device": args.device
+            "device": args.device,
+            "amp": args.amp
         }
     )
     
@@ -147,12 +157,13 @@ def main():
     mse_loss = nn.MSELoss()
     noise_scheduler = DDPMScheduler(num_train_timesteps=args.total_timesteps, beta_schedule=args.beta_schedule)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    scaler = torch.amp.GradScaler('cuda') if args.amp else None
     
     if args.resume and args.checkpoint is not None:
         load_checkpoint(model, optimizer, args.checkpoint)
         
     for epoch in range(args.num_epochs):
-        loss = train_one_epoch(epoch, model, optimizer, train_loader, mse_loss, noise_scheduler, args.total_timesteps, args.device)
+        loss = train_one_epoch(epoch, model, optimizer, train_loader, mse_loss, noise_scheduler, args.total_timesteps, args.device, scaler, args.amp)
         # 使用 wandb 記錄損失
         wandb.log({"train_loss": loss}, step=epoch)
         if epoch % args.save_freq == 0:
