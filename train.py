@@ -22,14 +22,24 @@ from ddpm import conditionalDDPM
 def get_random_timesteps(batch_size, total_timesteps, device):
     return torch.randint(0, total_timesteps, (batch_size,)).long().to(device)
 
-def save_checkpoint(model, optimizer, path, epoch):
+def save_checkpoint(model, optimizer, path, epoch, scaler=None):
     save_dir = os.path.join(path, f'checkpoint_{epoch}.pth')
-    torch.save({'model': model.state_dict(), 
-                'optimizer': optimizer.state_dict()}, save_dir)
+    checkpoint = {
+        'model': model.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'epoch': epoch
+    }
+    if scaler is not None:
+        checkpoint['scaler'] = scaler.state_dict()
+    torch.save(checkpoint, save_dir)
 
-def load_checkpoint(model, optimizer, path):
-    model.load_state_dict(torch.load(path)['model'])
-    optimizer.load_state_dict(torch.load(path)['optimizer'])
+def load_checkpoint(model, optimizer, path, scaler=None):
+    checkpoint = torch.load(path)
+    model.load_state_dict(checkpoint['model'])
+    optimizer.load_state_dict(checkpoint['optimizer'])
+    if scaler is not None and 'scaler' in checkpoint:
+        scaler.load_state_dict(checkpoint['scaler'])
+    return checkpoint.get('epoch', 0)
 
 def train_one_epoch(epoch, model, optimizer, train_loader, loss_function, noise_scheduler, total_timesteps, device, scaler=None, use_amp=False):
     model.train()
@@ -83,7 +93,7 @@ def arg_parser():
     parser.add_argument('--checkpoint', type=str, default=None)
     parser.add_argument('--save-dir', type=str, default=None)
     parser.add_argument('--log-dir', type=str, default=None)
-    parser.add_argument('--save-freq', type=int, default=5)
+    parser.add_argument('--save-freq', type=int, default=10)
     parser.add_argument('--amp', action='store_true', default=False, help='是否啟用自動混合精度(AMP)訓練')
     args = parser.parse_args()
     
@@ -158,17 +168,19 @@ def main():
     noise_scheduler = DDPMScheduler(num_train_timesteps=args.total_timesteps, beta_schedule=args.beta_schedule)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     scaler = torch.amp.GradScaler('cuda') if args.amp else None
-    
+    start_epoch = 0
     if args.resume and args.checkpoint is not None:
-        load_checkpoint(model, optimizer, args.checkpoint)
-        
-    for epoch in range(args.num_epochs):
+        print(f"Loading checkpoint from {args.checkpoint}")
+        start_epoch = load_checkpoint(model, optimizer, args.checkpoint, scaler)
+    else:
+        start_epoch = 0
+    for epoch in range(start_epoch, args.num_epochs):
         loss = train_one_epoch(epoch, model, optimizer, train_loader, mse_loss, noise_scheduler, args.total_timesteps, args.device, scaler, args.amp)
         # 使用 wandb 記錄損失
         wandb.log({"train_loss": loss}, step=epoch)
         if epoch % args.save_freq == 0:
-            save_checkpoint(model, optimizer, args.save_dir, epoch)
-    save_checkpoint(model, optimizer, args.save_dir, args.num_epochs)
+            save_checkpoint(model, optimizer, args.save_dir, epoch, scaler)
+    save_checkpoint(model, optimizer, args.save_dir, args.num_epochs, scaler)
     wandb.finish()
 
 if __name__ == '__main__':

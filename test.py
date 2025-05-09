@@ -36,6 +36,7 @@ def inference(dataloader, noise_scheduler, timesteps, model, eval_model, save_pr
     acc = []
     # 創建 CSV 檔案來保存每張圖片的準確率
     csv_path = os.path.join(save_dir, f'{save_prefix}_image_accuracies.csv')
+    os.makedirs(os.path.join(save_dir, save_prefix), exist_ok=True)
     with open(csv_path, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['image_id', 'accuracy'])  # 寫入標題列
@@ -71,7 +72,7 @@ def inference(dataloader, noise_scheduler, timesteps, model, eval_model, save_pr
                 # 提取當前圖片的所有時間步驟
                 current_image_steps = denoising_results[:, b]  # [timesteps, channel, height, width]
                 row_image = make_grid((current_image_steps + 1) / 2, nrow=current_image_steps.shape[0], pad_value=0)
-                save_image(row_image, f'{save_dir}/{save_prefix}_{idx * batch_size + b}.png')
+                save_image(row_image, f'{save_dir}/{save_prefix}/{idx * batch_size + b}.png')
             
             all_results.append(x)
 

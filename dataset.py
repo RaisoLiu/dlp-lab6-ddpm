@@ -15,12 +15,12 @@ def transform_img(img):
 class iclevrDataset(Dataset):
     def __init__(self, root=None, mode="train"):
         super().__init__()
-        assert mode in ['train', 'test', 'new_test', 'a'], "mode should be either 'train', 'test', or 'new_test'"
+        assert mode in ['train', 'test', 'new_test'], "mode should be either 'train', 'test', or 'new_test'"
         with open(f'{mode}.json', 'r') as json_file:
             self.json_data = json.load(json_file)
             if mode == 'train':
                 self.img_paths, self.labels = list(self.json_data.keys()), list(self.json_data.values())
-            elif mode in ['test', 'new_test', 'a']:
+            elif mode in ['test', 'new_test']:
                 self.labels = self.json_data
 
         with open('objects.json', 'r') as json_file:
@@ -43,7 +43,7 @@ class iclevrDataset(Dataset):
             label_one_hot = self.labels_one_hot[index]
             return img, label_one_hot
         
-        elif self.mode in ['test', 'new_test', 'a']:
+        elif self.mode in ['test', 'new_test']:
             label_one_hot = self.labels_one_hot[index]
             return label_one_hot
 

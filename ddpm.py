@@ -21,8 +21,3 @@ class conditionalDDPM(nn.Module):
     def forward(self, x, t, label):
         class_embed = self.class_embedding(label)
         return self.ddpm(x, t, class_embed).sample
-    
-if __name__ == "__main__":
-    model = conditionalDDPM()
-    print(model)
-    print(model(torch.randn(1, 3, 64, 64), 10, torch.randint(0, 1, (1, 24), dtype=torch.float)).shape)
